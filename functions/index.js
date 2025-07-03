@@ -1,84 +1,86 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * const {onCall} = require("firebase-functions/v2/https");
- * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
-
-const {onRequest} = require("firebase-functions/v2/https");
+// functions/index.js
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
+const axios = require("axios");
 
-// Create and deploy your first functions
-// https://firebase.google.com/docs/functions/get-started
+exports.checkCompany = onCall(async (request) => {
+  const { companyName } = request.data;
+  const auth = request.auth;
 
-// exports.helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+  logger.info(`checkCompany function triggered for: ${companyName}`, {auth, structuredData: true});
 
-const axios = require("axios"); // Will be installed in the next step
-
-exports.searchCompany = onRequest({cors: true}, async (request, response) => {
-  logger.info("searchCompany function triggered", {structuredData: true});
-
-  if (request.method !== "POST") {
-    response.status(405).send("Method Not Allowed");
-    return;
+  if (!companyName || typeof companyName !== 'string' || companyName.trim() === '') {
+    logger.error("Validation Error: Company name not provided or invalid.", { companyName });
+    throw new HttpsError('invalid-argument', 'The function must be called with "companyName" string argument containing the company name to search for.');
   }
 
-  const companyName = request.body.name;
+  // Retrieve Zefix API credentials from environment variables
+  const zefixUsername = "marc.reichlin@eda.admin.ch";
+  const zefixPassword = "sdPHj&Z5";
 
-  if (!companyName) {
-    logger.error("Company name not provided in request body");
-    response.status(400).send("Bad Request: 'name' is required in the request body.");
-    return;
+  if (!zefixUsername || !zefixPassword) {
+    logger.error("Server Configuration Error: Zefix API credentials are not set.");
+    throw new HttpsError('failed-precondition', 'The server is not configured correctly to contact the Zefix API. Please contact the administrator.');
   }
+
+  // Encode credentials for Basic Authentication
+  const credentials = `${zefixUsername}:${zefixPassword}`;
+  const token = Buffer.from(credentials).toString('base64');
 
   const delay = 0.5; // seconds
   await new Promise(resolve => setTimeout(resolve, delay * 1000));
 
   const zefixApiUrl = "https://www.zefix.admin.ch/ZefixPublicREST/api/v1/company/search";
   const payload = {
-    name: companyName,
+    name: companyName.trim(),
     activeOnly: true,
   };
   const headers = {
     "Content-Type": "application/json",
-    // Add any other necessary headers here, e.g., an API key if Zefix requires one
-    // For now, assuming it's an open API as per the Python example
+    "Authorization": `Basic ${token}`,
+    "Accept": "application/json"
   };
 
   try {
-    logger.info(`Searching for company: ${companyName}`, {structuredData: true});
+    logger.info(`Searching for company: ${companyName} using Zefix API.`, {structuredData: true});
     const apiResponse = await axios.post(zefixApiUrl, payload, { headers });
 
     if (apiResponse.status === 200) {
-      const data = apiResponse.data;
-      if (data && data.length > 0) { // Assuming Zefix returns an array of results
-        logger.info(`Company found: ${companyName}`, { data });
-        response.status(200).json({ success: true, data: data });
+      const responseData = apiResponse.data;
+      if (responseData && responseData.length > 0) {
+        logger.info(`Company found: ${companyName}`, { resultCount: responseData.length });
+        return { 
+          found: true, 
+          companyName: companyName.trim(),
+          data: responseData 
+        };
       } else {
         logger.info(`Company not found: ${companyName}`);
-        response.status(200).json({ success: false, data: null });
+        return { 
+          found: false, 
+          companyName: companyName.trim(),
+          data: null 
+        };
       }
     } else {
       logger.error(`Zefix API error for ${companyName}: Status ${apiResponse.status}`, { responseData: apiResponse.data });
-      response.status(apiResponse.status).json({ success: false, error: "Zefix API error", details: apiResponse.data });
+      throw new HttpsError('internal', `Zefix API returned status ${apiResponse.status}`, apiResponse.data);
     }
   } catch (error) {
     logger.error(`Error calling Zefix API for ${companyName}: ${error.message}`, { error });
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      response.status(error.response.status).json({ success: false, error: "Zefix API request failed", details: error.response.data });
+    if (error instanceof HttpsError) {
+      throw error;
+    } else if (error.response) {
+      logger.error(`API Response Error:`, {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data
+      });
+      throw new HttpsError('internal', `Zefix API request failed with status ${error.response.status}`, error.response.data);
     } else if (error.request) {
-      // The request was made but no response was received
-      response.status(500).json({ success: false, error: "No response from Zefix API" });
+      throw new HttpsError('unavailable', 'No response received from Zefix API.');
     } else {
-      // Something happened in setting up the request that triggered an Error
-      response.status(500).json({ success: false, error: "Internal server error while calling Zefix API" });
+      throw new HttpsError('unknown', 'An unexpected error occurred while calling the Zefix API.', error.message);
     }
   }
 });

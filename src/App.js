@@ -1,4 +1,4 @@
-// src/App.js - Test Firebase Connection
+// src/App.js - Fixed version
 import React, { useState } from 'react';
 import { functions } from './firebase';
 import { httpsCallable } from 'firebase/functions';
@@ -25,6 +25,7 @@ function App() {
       const checkCompanyFunction = httpsCallable(functions, 'checkCompany');
       const response = await checkCompanyFunction({ companyName: companyName.trim() });
       
+      console.log('Full response:', response.data); // Debug log
       setResult(response.data);
     } catch (err) {
       console.error('Error:', err);
@@ -32,6 +33,17 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper function to safely render values
+  const renderValue = (value) => {
+    if (value === null || value === undefined) {
+      return 'N/A';
+    }
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+    return String(value);
   };
 
   return (
@@ -86,10 +98,24 @@ function App() {
                 <div className="space-y-3">
                   {result.data.map((company, index) => (
                     <div key={index} className="bg-gray-50 p-3 rounded">
-                      <p><strong>Official Name:</strong> {company.name}</p>
-                      <p><strong>UID:</strong> {company.uid}</p>
-                      <p><strong>Canton:</strong> {company.legalSeat}</p>
-                      <p><strong>Legal Form:</strong> {company.legalForm}</p>
+                      <p><strong>Official Name:</strong> {renderValue(company.name)}</p>
+                      <p><strong>UID:</strong> {renderValue(company.uid)}</p>
+                      <p><strong>Canton:</strong> {renderValue(company.legalSeat)}</p>
+                      <p><strong>Legal Form:</strong> {renderValue(company.legalForm)}</p>
+                      <p><strong>Status:</strong> {renderValue(company.status)}</p>
+                      {company.address && (
+                        <p><strong>Address:</strong> {renderValue(company.address)}</p>
+                      )}
+                      
+                      {/* Debug: Show all available fields */}
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-sm text-gray-500">
+                          Show all data
+                        </summary>
+                        <pre className="mt-2 text-xs bg-gray-100 p-2 rounded overflow-auto">
+                          {JSON.stringify(company, null, 2)}
+                        </pre>
+                      </details>
                     </div>
                   ))}
                 </div>
